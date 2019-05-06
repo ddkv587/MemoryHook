@@ -1,0 +1,31 @@
+# Windows:
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Windows Project Files
+*.vcproj.*
+*.vcproj
+*.suo
+
+# build Files
+target/
+im_*/
+*.o
+*.out
+.im_*/
+.out/
+
+# Log Files
+*.log
+
+# vs code
+.vscode/
+.gitconfig
+
+# test
+TestClient/
+TestDemo/
+
+# debug
+core
