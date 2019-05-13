@@ -1,4 +1,4 @@
-#include <assert.h>
+//#include <assert.h>
 #include <dlfcn.h>
 #include <cstdio>
 #include <mutex>
@@ -9,6 +9,8 @@
 #include <signal.h>
 #include "CMemoryManager.h"
 
+#define assert(X) do { if ( !(X) ) { abort(); } } while(0)
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -16,12 +18,12 @@ extern "C"
     void signalHandle( int signal )
     {
         int     size;
-        void*   buffer[ BT_BUF_SIZE ];
+        void*   buffer[ BACKTRACE_DEPTH ];
 
         fprintf( stderr, "signal: %d\n", signal );
         switch ( signal ) {
         case SIGABRT:   
-            size = backtrace( buffer, BT_BUF_SIZE );
+            size = backtrace( buffer, BACKTRACE_DEPTH );
             backtrace_symbols_fd( buffer, size, STDERR_FILENO );
         break;
         default:
@@ -29,7 +31,7 @@ extern "C"
         }
     }
 
-    __attribute__((constructor))
+    __attribute__((constructor(101)))
     void registerSignal()
     {
         fprintf( stderr, "registerSignal\n" );
@@ -61,57 +63,33 @@ namespace MemoryTrace
         void initialize()
         {
             s_unitManager.totalSize         = 0;
-            s_unitManager.availSize         = 0;
+            s_unitManager.allocSize         = 0;
             s_unitManager.unitCount         = 0;
             s_unitManager.pCurrent          = &( s_unitManager.headUnit );
 
             s_unitManager.headUnit          = {
-                .sign       = 0,
-                .offset     = 0,
-                .size       = 0,
-                .pData      = NULL,
-                .pPrev      = NULL,
-                .pNext      = NULL,
-                .traceSize  = 0,
-                .backtrace  = { NULL },                
+                .sync           = 0,
+                .bMock          = false,
+                .pPrev          = NULL,
+                .pNext          = NULL,
+                .size           = 0,
+                .pData          = NULL,
+                .traceSize      = 0,
+                .backtrace      = { NULL },                
             };
-
-#ifdef OS_QNX
-            assert( 0 == bt_init_accessor( &s_unitManager.acc ) );
-            assert( 0 == bt_load_memmap( &s_unitManager.acc, &s_unitManager.memmap ) );
-            assert( 0 == bt_sprn_memmap( &s_unitManager.acc, s_unitManager.out, sizeof( s_unitManager.out ) ) );
-            s_unitManager.headUnit.traceSize = bt_get_backtrace( &s_unitManager.acc, s_unitManager.headUnit.backtrace, BT_BUF_SIZE );
-#else         
-            s_unitManager.headUnit.traceSize = backtrace( s_unitManager.headUnit.backtrace, BT_BUF_SIZE );
-#endif
+    
+            s_unitManager.headUnit.traceSize = backtrace( s_unitManager.headUnit.backtrace, BACKTRACE_DEPTH );
         }
 
         void uninitialize()
         {
-#ifdef OS_QNX
-            bt_unload_memmap( &s_unitManager.memmap );
-            bt_release_accessor( &s_unitManager.acc );
-#endif
-        }
-
-        void makeUnit( tagUnitNode* const pNode, size_t size )
-        {
-            if ( NULL == pNode ) return;
-            
-            pNode->sign     = MAKE_UNIT_NODE_MAGIC( pNode );
-            pNode->offset   = 0;
-            pNode->size     = size;
-            pNode->pData    = PTR_UNIT_NODE_DATA( pNode );
-            pNode->pPrev    = NULL;
-            pNode->pNext    = NULL;
-
-            storeBacktrace( pNode ); 
+            ;
         }
 
         void appendUnit( tagUnitNode* pNode )
         {
             pthread_mutex_lock( &s_mutexMemory );
-            
+           
             if ( NULL == pNode ) { pthread_mutex_unlock( &s_mutexMemory ); return; }
             
             pNode->pPrev    = s_unitManager.pCurrent;
@@ -121,21 +99,42 @@ namespace MemoryTrace
             s_unitManager.pCurrent->pNext = pNode;
             s_unitManager.pCurrent = pNode;
 
-            s_unitManager.totalSize += pNode->size;
-            s_unitManager.availSize += pNode->size - DEF_SIZE_UNIT_NODE;
+            s_unitManager.totalSize += pNode->size + DEF_SIZE_UNIT_NODE;
+            s_unitManager.allocSize += pNode->size;
             s_unitManager.unitCount += 1;
 
             pthread_mutex_unlock( &s_mutexMemory );        
         }
 
+        const tagUnitNode* appendUnit(void* const pData, size_t size, bool isMock)
+        {
+            if ( NULL == pData ) return NULL;
+
+            tagUnitNode* pNode = static_cast<tagUnitNode*>(pData);
+                        
+            pNode->sync     = MAKE_UNIT_NODE_MAGIC( pNode );
+            pNode->bMock    = isMock;
+            pNode->pPrev    = NULL;
+            pNode->pNext    = NULL;
+            pNode->size     = size;
+            pNode->pData    = PTR_UNIT_NODE_DATA( pNode );
+   
+            if ( !isMock )
+                storeBacktrace( pNode ); 
+
+            appendUnit( pNode );
+          
+            return pNode;
+        }
+        
         void deleteUnit( tagUnitNode* pNode )
         {
             pthread_mutex_lock( &s_mutexMemory );
             
-            if ( !pNode ) { pthread_mutex_unlock( &s_mutexMemory ); return; }
+            if ( !pNode ) { pthread_mutex_unlock( &s_mutexMemory ); }
 
             // hook all type of memory request, this must be true       
-            assert( MAKE_UNIT_NODE_MAGIC( pNode ) == pNode->sign );
+            assert( MAKE_UNIT_NODE_MAGIC( pNode ) == pNode->sync );
 
             assert( NULL != s_unitManager.pCurrent );
             if ( s_unitManager.pCurrent == pNode )
@@ -148,8 +147,8 @@ namespace MemoryTrace
                 pNode->pNext->pPrev = pNode->pPrev;
 
             s_unitManager.unitCount -= 1;
-            s_unitManager.totalSize -= pNode->size;
-            s_unitManager.availSize -= pNode->size - DEF_SIZE_UNIT_NODE;
+            s_unitManager.totalSize -= ( pNode->size + DEF_SIZE_UNIT_NODE );
+            s_unitManager.allocSize -= pNode->size;
 
             pthread_mutex_unlock( &s_mutexMemory );
         }
@@ -158,9 +157,9 @@ namespace MemoryTrace
         {
             if ( !pNode ) return false;
 
-            if ( MAKE_UNIT_NODE_MAGIC( pNode ) != pNode->sign ) return false;
+            if ( MAKE_UNIT_NODE_MAGIC( pNode ) != pNode->sync ) return false;
 
-            if ( pNode->size <= DEF_SIZE_UNIT_NODE ) return false;
+            if ( pNode->size <= 0 ) return false;
 
             return true;
         }
@@ -172,16 +171,16 @@ namespace MemoryTrace
 
             fprintf( stderr, "unfreed \n \tcount: %ld\n\tsize: %ld\n", \
                             s_unitManager.unitCount,\
-                            s_unitManager.availSize );
+                            s_unitManager.allocSize );
 
-            while ( pNode ) 
-            {
+            while ( pNode ) {
                 pCur    = pNode;
                 pNode   = pNode->pNext;
-              
+
+                if ( pCur->bMock ) continue;
                 fprintf( stderr, "++++++++++++++ unfreed addr: %p, size: %ld ++++++++++++++\n", \
                              pCur, \
-                             pCur->size - DEF_SIZE_UNIT_NODE );
+                             pCur->size );
                 fprintf( stderr, "backtrace:\n" );
                 showBacktrace( pCur );              
                 fprintf( stderr, "++++++++++++++ end ++++++++++++++\n" );
@@ -193,22 +192,15 @@ namespace MemoryTrace
         void storeBacktrace( tagUnitNode* const pNode )
         {
             if ( NULL == pNode ) return;
-#ifdef OS_QNX
-            pNode->traceSize = bt_get_backtrace( &(pNode->pManager->acc), pNode->backtrace, BT_BUF_SIZE );
-            fprintf( stderr );
-#else
-            pNode->traceSize = backtrace( pNode->backtrace, BT_BUF_SIZE );
-#endif
+
+            pNode->traceSize = backtrace( pNode->backtrace, BACKTRACE_DEPTH );
         }
    
         void showBacktrace( tagUnitNode* const pNode )
         {
             if ( NULL == pNode ) return;
-#ifdef OS_QNX
-            bt_sprnf_addrs( &s_unitManager.memmap, pNode->backtrace, pNode->traceSize, "%a\n", s_unitManager.out, sizeof(s_unitManager.out), 0 );
-#else
+
             backtrace_symbols_fd( pNode->backtrace, pNode->traceSize, STDERR_FILENO );
-#endif
         }
     } // namespace MemoryManager
 
@@ -219,18 +211,19 @@ namespace MemoryTrace
 
         void* _mockMalloc( size_t size )
         {
-            assert ( s_mockMallocPos + size < sizeof( s_mockBuffer ) );
-            void* ptr = (void*)(s_mockBuffer + s_mockMallocPos);
-            s_mockMallocPos += size;
+            size_t mockSize = size + DEF_SIZE_UNIT_NODE;
+            assert ( s_mockMallocPos + mockSize < sizeof( s_mockBuffer ) );
+            const MemoryManager::tagUnitNode* pNode = MemoryManager::appendUnit(s_mockBuffer + s_mockMallocPos, size, true);
 
-            return ptr;
+            s_mockMallocPos += mockSize;
+
+            return pNode->pData;
         }
 
         void* _mockCalloc( size_t nmemb, size_t size )
         {
             void* ptr = _mockMalloc( nmemb * size );
-            for ( size_t i=0; i < nmemb * size; ++i )
-                *((char*)(ptr) + i ) = '\0';
+            memset( ptr, 0, nmemb * size );
 
             return ptr; 
         }
@@ -262,12 +255,15 @@ namespace MemoryTrace
     __attribute__(( constructor( 102 ) ))
     void TraceInitialize()
     {
+#ifdef _DEBUG
         fprintf( stderr, "call TraceInitialize\n" );      
-        
+#endif
         pthread_mutex_lock( &s_mutexInit );
         if ( s_status == TS_INITIALIZED ) { pthread_mutex_unlock( &s_mutexInit ); return; }
 
         s_status = TS_INITIALIZING;
+
+        MemoryManager::initialize();
        
         s_pRealMalloc       = (FUNC_MALLOC)dlsym(RTLD_NEXT, "malloc");
         s_pRealCalloc       = (FUNC_CALLOC)dlsym(RTLD_NEXT, "calloc");
@@ -279,7 +275,6 @@ namespace MemoryTrace
         assert( !( NULL == s_pRealMalloc || NULL == s_pRealCalloc || NULL == s_pRealRealloc || 
               NULL == s_pRealMemalign || NULL == s_pRealValloc || NULL == s_pRealFree ) );
 
-        MemoryManager::initialize();
         s_status = TS_INITIALIZED;
 
         pthread_mutex_unlock( &s_mutexInit );
@@ -288,7 +283,9 @@ namespace MemoryTrace
     __attribute__((destructor))
     void TraceUninitialize()
     {
+#ifdef _DEBUG
         fprintf(stderr, "call TraceUninitialize\n");     
+#endif
         MemoryManager::analyse(false);
     }
 
@@ -358,8 +355,7 @@ namespace MemoryTrace
 
         if ( NULL == pNode ) return NULL;
 
-        MemoryManager::makeUnit( pNode, size + DEF_SIZE_UNIT_NODE );
-        MemoryManager::appendUnit( pNode );
+        MemoryManager::appendUnit( pNode, size, false );
 
 #ifdef _DEBUG
         if ( !bRecursive )
@@ -370,12 +366,12 @@ namespace MemoryTrace
 
     void* _impCalloc( size_t nmemb, size_t size, bool bRecursive )
     {
-        nmemb = ceil( (double)( size * nmemb + DEF_SIZE_UNIT_NODE ) / (double)size );
+        int needSize = nmemb * size;
+        nmemb = ceil( (double)( needSize + DEF_SIZE_UNIT_NODE ) / (double)size );
         MemoryManager::tagUnitNode* pNode = (MemoryManager::tagUnitNode*)s_pRealCalloc( nmemb, size );
         if ( NULL == pNode ) return NULL;
         
-        MemoryManager::makeUnit( pNode, nmemb * size );
-        MemoryManager::appendUnit( pNode );
+        MemoryManager::appendUnit( pNode, needSize, false );
 
 #ifdef _DEBUG
         if ( !bRecursive )
@@ -391,7 +387,7 @@ namespace MemoryTrace
 
         if ( NULL != ptr ) {
             MemoryManager::tagUnitNode* pNodeLast = PTR_UNIT_NODE_HEADER(ptr);
-            size_t copySize = size <= ( pNodeLast->size - DEF_SIZE_UNIT_NODE ) ? size : pNodeLast->size - DEF_SIZE_UNIT_NODE;
+            size_t copySize = ( size <= pNodeLast->size ) ? size : pNodeLast->size;
             memcpy( pNode->pData, pNodeLast->pData, copySize );
 
             _impFree( ptr, true );
@@ -410,8 +406,7 @@ namespace MemoryTrace
 
         if ( NULL == pNode ) return NULL;
         
-        MemoryManager::makeUnit( pNode, size + DEF_SIZE_UNIT_NODE );
-        MemoryManager::appendUnit( pNode );
+        MemoryManager::appendUnit( pNode, size, false );
 
 #ifdef _DEBUG
         if ( !bRecursive )
@@ -426,8 +421,7 @@ namespace MemoryTrace
 
         if ( NULL == pNode ) return NULL;
         
-        MemoryManager::makeUnit( pNode, size + DEF_SIZE_UNIT_NODE );
-        MemoryManager::appendUnit( pNode );
+        MemoryManager::appendUnit( pNode, size, false );
 
 #ifdef _DEBUG
         if ( !bRecursive )
@@ -447,6 +441,11 @@ namespace MemoryTrace
             fprintf(stderr, "===free: %p, size: %ld, real: %ld\n", pNode, pNode->size, pNode->size - DEF_SIZE_UNIT_NODE);
 #endif        
         MemoryManager::deleteUnit( pNode );
-        s_pRealFree( pNode );
+
+        if ( pNode->bMock ) {
+            mockMemory::_mockFree(pNode);
+        } else {
+            s_pRealFree( pNode );
+        }
     }
 }
