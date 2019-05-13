@@ -7,48 +7,42 @@
 
 namespace MemoryTrace
 {
-    #define BT_BUF_SIZE 10
+    #define BACKTRACE_DEPTH     10
+    #define ALIGN_BYTE          8
     namespace MemoryManager
     {
         struct tagUnitNode
         {
-            size_t          sign;
-            size_t          offset;
-            size_t          size;
-            void*           pData;              
+            size_t          sync;
+            bool            bMock;
+
             tagUnitNode*    pPrev;
             tagUnitNode*    pNext;
+            
+            size_t          size;
+            void*           pData;
 
-            int             traceSize;    
-#ifdef OS_QNX
-            bt_addr_t       backtrace[ BT_BUF_SIZE ];
-#else
-            void*           backtrace[ BT_BUF_SIZE ];
-#endif
+            size_t          traceSize;
+            void*           backtrace[ BACKTRACE_DEPTH ];
         };
 
         struct tagUnitManager
         {
             size_t          totalSize;
-            size_t          availSize;
+            size_t          allocSize;
             size_t          unitCount;
             tagUnitNode     headUnit;
             tagUnitNode*    pCurrent;
-
-#ifdef OS_QNX
-            bt_accessor_t   acc;
-            bt_memmap_t     memmap;
-            char            out[102400];
-#endif
         };
         
         void                initialize();
-        void                makeUnit(tagUnitNode* const, size_t);
-        void                appendUnit(tagUnitNode*);
+         
+        void                appendUnit( tagUnitNode* );
+        const tagUnitNode*  appendUnit(void* pData, size_t size, bool isMock);
         void                deleteUnit(tagUnitNode*);
         bool                checkUnit(tagUnitNode*);
         void                analyse( bool autoDelete = true );
-
+        
         void                storeBacktrace( tagUnitNode* const );    
         void                showBacktrace( tagUnitNode* const );
     }; // namespace MemoryManager
