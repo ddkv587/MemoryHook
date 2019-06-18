@@ -9,7 +9,7 @@ MKDIR=mkdir -p
 TARGET=libPreLoad.so libTestLibrary.so demo
 TARGET_DIR=target 
 
-LIBS        := -lm -lstdc++ -ldl 
+LIBS        := -lm -ldl 
 #LIBS_DIR	:= -L${QNX_TARGET}/x86_64/lib -L${QNX_TARGET}/x86_64/usr/lib
 
 all: $(TARGET)
@@ -18,19 +18,11 @@ env:
 	$(MKDIR) $(TARGET_DIR)
 
 demo: main.cpp
-	$(CC) -std=c++11 $(CFLAGS) -pthread  $^ -o $@ -ldl
+	$(CC) -O3 -g0  $^ -o $@ -ldl -lpthread
 	#$(MV) $@ $(TARGET_DIR)
 
-MemCheck: MemoryCheck/CMemoryCheck.cpp MemoryCheck/Check.cpp
-	$(CC) -std=c++11 $(CFLAGS) -rdynamic -pthread  $^ -o $@ -ldl -fpermissive -ICommon -IMemoryCheck -L$(TARGET_DIR) -lSocket
-	$(MV) $@ $(TARGET_DIR)
-
-libSocket.so: Common/Socket.cpp
-	$(CC) $(CFLAGS) -shared -fPIC $^ -o $@ $(LIBS_DIR) $(LIBS) -fpermissive -ICommon
-	$(MV) $@ $(TARGET_DIR)
-
-libPreLoad.so: PreloadMemory.cpp CMemoryManager.cpp 
-	$(CC) $(CFLAGS) -shared -fPIC $^ -o $@ $(LIBS_DIR) $(LIBS) -fpermissive
+libPreLoad.so: PreloadMemory.cpp CMemoryManager.cpp
+	$(CC) $(CFLAGS) --shared -fPIC $^ -o $@ $(LIBS_DIR) $(LIBS)
 	#$(MV) $@ $(TARGET_DIR)
 
 libTestLibrary.so: TestLibrary.cpp

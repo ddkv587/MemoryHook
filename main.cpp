@@ -6,6 +6,7 @@
 #include <thread>
 #include <stdlib.h>
 #include <dlfcn.h>
+#include <iostream>
 
 class CC
 {
@@ -62,11 +63,11 @@ void fun( int i )
 
 	foo(i);
 
-	// if ( handle != NULL )
-	// 	deinit(handle);
+	if ( handle != NULL )
+	 	deinit(handle);
 }
 
-#define TEST_THREAD_SIZE 1
+#define TEST_THREAD_SIZE 2
 int main(int argc, const char *argv[])
 {	
 	std::thread threads[TEST_THREAD_SIZE];
@@ -75,6 +76,9 @@ int main(int argc, const char *argv[])
 
     for (auto& t: threads) {
         t.join();
+		printf( " thread exit \n" );
     }
+
+	delete [] sa;
 	return 0;
 }
