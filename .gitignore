@@ -30,3 +30,7 @@ TestDemo/
 # debug
 core
 demo
+
+# library
+*.so
+
