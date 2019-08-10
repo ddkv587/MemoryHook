@@ -1,6 +1,4 @@
 #include "CMemoryManager.h"
-#include <assert.h>
-#include <unistd.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -41,15 +39,6 @@ extern "C"
 	//     return MemoryTrace::TracePosixMemalign( memptr, alignment, size );
 	// }
 
-	void *aligned_alloc(size_t alignment, size_t size)
-	{
-	    assert(false);
-	}
-
-	void *pvalloc(size_t size)
-	{
-	    assert(false);
-	}
 #ifdef __cplusplus
 }  // extern "C"
 #endif

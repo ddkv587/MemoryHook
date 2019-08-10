@@ -8,7 +8,6 @@
 namespace MemoryTrace
 {
     #define BACKTRACE_DEPTH     10
-    #define ALIGN_BYTE          8
     namespace MemoryManager
     {
         struct tagUnitNode
@@ -18,6 +17,7 @@ namespace MemoryTrace
 
             tagUnitNode*    pPrev;
             tagUnitNode*    pNext;
+            size_t          serial;
             
             size_t          size;
             void*           pData;
@@ -28,10 +28,13 @@ namespace MemoryTrace
 
         struct tagUnitManager
         {
-            size_t          totalSize;
+            size_t          allocCount;
             size_t          allocSize;
-            size_t          unitCount;
-            tagUnitNode     headUnit;
+
+            size_t          freeCount;
+            size_t          freeSize;
+            
+            tagUnitNode*    pRoot;
             tagUnitNode*    pCurrent;
         };
         
@@ -61,9 +64,6 @@ namespace MemoryTrace
     typedef void*           (*FUNC_VALLOC)(size_t);
     typedef int             (*FUNC_POSIX_MEMALIGN)(void**, size_t, size_t);
     typedef void            (*FUNC_FREE)(void* );
-
-    void                    TraceInitialize();
-    void                    TraceUninitialize();
 
     void*                   TraceMalloc( size_t size );
     void*                   TraceCalloc( size_t nmemb, size_t size );
